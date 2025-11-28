@@ -1,0 +1,321 @@
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "# Fixed Income Analytics: Valuation, Risk & Monte Carlo\n",
+    "\n",
+    "## Project Overview\n",
+    "This project implements a robust framework for Fixed Income analysis. We move beyond simple pricing to sophisticated risk modeling.\n",
+    "\n",
+    "**Key Objectives:**\n",
+    "1.  **Valuation:** Pricing models based on Discounted Cash Flow (DCF).\n",
+    "2.  **Risk Metrics:** Macaulay Duration, Modified Duration, and Convexity.\n",
+    "3.  **Visual Analysis:** Cash Flow time-structures and Price-Yield curves.\n",
+    "4.  **Stochastic Simulation:** Using Monte Carlo methods to estimate Value at Risk (VaR) under volatile rate environments.\n",
+    "\n",
+    "---"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# 1. IMPORT LIBRARIES\n",
+    "import numpy as np\n",
+    "import pandas as pd\n",
+    "import matplotlib.pyplot as plt\n",
+    "import seaborn as sns\n",
+    "from scipy.stats import norm\n",
+    "\n",
+    "# Set visual styles\n",
+    "plt.style.use('seaborn-v0_8-darkgrid')\n",
+    "sns.set_palette(\"mako\")\n",
+    "plt.rcParams['figure.figsize'] = (12, 7)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 2. THEORETICAL FRAMEWORK & FUNCTIONS\n",
+    "\n",
+    "We define the core financial mathematics functions here.\n",
+    "\n",
+    "### Key Formulas\n",
+    "\n",
+    "**1. Bond Price ($P$):**\n",
+    "$$P = \\sum_{t=1}^{n} \\frac{C}{(1+y/k)^t} + \\frac{F}{(1+y/k)^n}$$\n",
+    "\n",
+    "**2. Modified Duration ($D_{mod}$):**\n",
+    "$$D_{mod} = \\frac{D_{mac}}{1 + y/k}$$\n",
+    "\n",
+    "**3. Portfolio Duration:**\n",
+    "$$ D_{port} = \\sum (w_i \\times D_{mod, i}) $$\n",
+    "Where $w_i$ is the weight of the asset in the portfolio."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "def calculate_bond_metrics(face_value, coupon_rate, ytm, years, freq=2):\n",
+    "    \"\"\"\n",
+    "    Calculates Price, Macaulay Duration, Modified Duration, and Convexity.\n",
+    "    \"\"\"\n",
+    "    c = coupon_rate * face_value / freq\n",
+    "    y = ytm / freq\n",
+    "    n = int(years * freq)\n",
+    "    periods = np.arange(1, n + 1)\n",
+    "    \n",
+    "    # Cash Flows\n",
+    "    cash_flows = np.full(n, c)\n",
+    "    cash_flows[-1] += face_value\n",
+    "    \n",
+    "    # Discount Factors\n",
+    "    discount_factors = 1 / ((1 + y) ** periods)\n",
+    "    \n",
+    "    # PV of Cash Flows\n",
+    "    pv_cash_flows = cash_flows * discount_factors\n",
+    "    price = np.sum(pv_cash_flows)\n",
+    "    \n",
+    "    # Macaulay Duration\n",
+    "    mac_duration_periods = np.sum(periods * pv_cash_flows) / price\n",
+    "    mac_duration_years = mac_duration_periods / freq\n",
+    "    \n",
+    "    # Modified Duration\n",
+    "    mod_duration = mac_duration_years / (1 + y)\n",
+    "    \n",
+    "    # Convexity\n",
+    "    convexity_term = periods * (periods + 1) * pv_cash_flows\n",
+    "    convexity = np.sum(convexity_term) / (price * ((1 + y) ** 2))\n",
+    "    convexity = convexity / (freq ** 2)\n",
+    "    \n",
+    "    return {\n",
+    "        'Price': price,\n",
+    "        'Macaulay_Duration': mac_duration_years,\n",
+    "        'Modified_Duration': mod_duration,\n",
+    "        'Convexity': convexity,\n",
+    "        'Cash_Flows': cash_flows,\n",
+    "        'Periods': periods / freq  # Convert to years for plotting\n",
+    "    }"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 3. INDIVIDUAL BOND ANALYSIS\n",
+    "\n",
+    "We define three distinct bonds to represent different areas of the yield curve."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Define Bond Characteristics\n",
+    "bonds_data = [\n",
+    "    {'id': 'Short-Term (2yr)', 'face': 1000, 'coupon': 0.02, 'years': 2, 'ytm': 0.04},\n",
+    "    {'id': 'Medium-Term (10yr)', 'face': 1000, 'coupon': 0.05, 'years': 10, 'ytm': 0.05},\n",
+    "    {'id': 'Long-Term (30yr)', 'face': 1000, 'coupon': 0.08, 'years': 30, 'ytm': 0.06}\n",
+    "]\n",
+    "\n",
+    "# Calculate and Store Metrics\n",
+    "results = []\n",
+    "bond_objects = {} # Dictionary to store full objects for later access\n",
+    "\n",
+    "for b in bonds_data:\n",
+    "    metrics = calculate_bond_metrics(b['face'], b['coupon'], b['ytm'], b['years'])\n",
+    "    bond_objects[b['id']] = metrics\n",
+    "    \n",
+    "    # Summary for DataFrame\n",
+    "    summary = {\n",
+    "        'Bond_ID': b['id'],\n",
+    "        'Price': metrics['Price'],\n",
+    "        'Coupon': b['coupon'],\n",
+    "        'YTM': b['ytm'],\n",
+    "        'Mod_Duration': metrics['Modified_Duration'],\n",
+    "        'Convexity': metrics['Convexity']\n",
+    "    }\n",
+    "    results.append(summary)\n",
+    "\n",
+    "df_bonds = pd.DataFrame(results).set_index('Bond_ID')\n",
+    "display(df_bonds.round(4))"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 4. VISUALIZING CASH FLOW STRUCTURES\n",
+    "\n",
+    "Duration is often described as the \"weighted average time to receive cash flows.\" By plotting the actual payments, we can visually see why the 30-year bond carries so much more risk—the bulk of the money comes back decades from now."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "fig, axes = plt.subplots(3, 1, figsize=(12, 12), sharex=True)\n",
+    "\n",
+    "for i, (name, metrics) in enumerate(bond_objects.items()):\n",
+    "    ax = axes[i]\n",
+    "    periods = metrics['Periods']\n",
+    "    flows = metrics['Cash_Flows']\n",
+    "    \n",
+    "    # Color logic: Highlight the final principal payment\n",
+    "    colors = ['skyblue'] * (len(flows) - 1) + ['navy']\n",
+    "    \n",
+    "    ax.bar(periods, flows, width=0.4, color=colors, alpha=0.7)\n",
+    "    ax.set_title(f'{name} Cash Flow Profile', fontweight='bold')\n",
+    "    ax.set_ylabel('Payment ($)')\n",
+    "\n",
+    "plt.xlabel('Years')\n",
+    "plt.tight_layout()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 5. PORTFOLIO CONSTRUCTION\n",
+    "\n",
+    "We will now construct a portfolio. Let's assume we have **$1,000,000** to invest.\n",
+    "\n",
+    "**Target Allocation:**\n",
+    "* 40% in Short-Term (Safe)\n",
+    "* 40% in Medium-Term (Core)\n",
+    "* 20% in Long-Term (Aggressive)\n",
+    "\n",
+    "We calculate the **Portfolio Duration**, which measures the aggregate sensitivity to interest rates."
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Portfolio Config\n",
+    "total_investment = 1_000_000\n",
+    "weights = np.array([0.40, 0.40, 0.20]) # Short, Medium, Long\n",
+    "\n",
+    "# Calculate Portfolio Weighted Metrics\n",
+    "durations = df_bonds['Mod_Duration'].values\n",
+    "convexities = df_bonds['Convexity'].values\n",
+    "\n",
+    "port_duration = np.sum(weights * durations)\n",
+    "port_convexity = np.sum(weights * convexities)\n",
+    "\n",
+    "print(\"=\"*40)\n",
+    "print(\"PORTFOLIO RISK METRICS\")\n",
+    "print(\"=\"*40)\n",
+    "print(f\"Investment Amount: ${total_investment:,.2f}\")\n",
+    "print(f\"Portfolio Modified Duration: {port_duration:.4f} years\")\n",
+    "print(f\"Portfolio Convexity: {port_convexity:.4f}\")\n",
+    "print(\"=\"*40)"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "## 6. MONTE CARLO SIMULATION: VALUE AT RISK (VaR)\n",
+    "\n",
+    "Instead of just simulating a single +1% shock, we will simulate **10,000 potential future interest rate scenarios** based on market volatility.\n",
+    "\n",
+    "This allows us to calculate **Value at Risk (VaR)**: *\"With 95% confidence, what is the maximum we could lose?\"*\n",
+    "\n",
+    "**Assumptions:**\n",
+    "* Current Market Yield: 5%\n",
+    "* Annual Rate Volatility: 1% (100 basis points)\n",
+    "* Horizon: 1 Year"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": null,
+   "metadata": {},
+   "outputs": [],
+   "source": [
+    "# Simulation Parameters\n",
+    "n_simulations = 10000\n",
+    "current_yield_avg = 0.05\n",
+    "volatility = 0.01 # 100 bps volatility standard deviation\n",
+    "\n",
+    "# 1. Generate random yield shocks (Normal Distribution)\n",
+    "np.random.seed(42)\n",
+    "yield_changes = np.random.normal(0, volatility, n_simulations)\n",
+    "\n",
+    "# 2. Apply Duration-Convexity Approximation to Portfolio\n",
+    "# Formula: %Change = -Duration*dy + 0.5*Convexity*dy^2\n",
+    "pct_changes = (-port_duration * yield_changes) + (0.5 * port_convexity * (yield_changes**2))\n",
+    "\n",
+    "# 3. Calculate PnL (Profit and Loss)\n",
+    "dollar_pnl = total_investment * pct_changes\n",
+    "\n",
+    "# 4. Calculate VaR (95% and 99%)\n",
+    "var_95 = np.percentile(dollar_pnl, 5)\n",
+    "var_99 = np.percentile(dollar_pnl, 1)\n",
+    "\n",
+    "# Visualization\n",
+    "plt.figure(figsize=(12, 6))\n",
+    "sns.histplot(dollar_pnl, kde=True, color=\"#4c72b0\", bins=50)\n",
+    "\n",
+    "# Add VaR Lines\n",
+    "plt.axvline(var_95, color='orange', linestyle='--', linewidth=2, label=f'95% VaR: ${var_95:,.0f}')\n",
+    "plt.axvline(var_99, color='red', linestyle='--', linewidth=2, label=f'99% VaR: ${var_99:,.0f}')\n",
+    "\n",
+    "plt.title('Monte Carlo Simulation: Portfolio PnL Distribution (Rate Risk)', fontsize=16)\n",
+    "plt.xlabel('Profit / Loss ($)')\n",
+    "plt.ylabel('Frequency')\n",
+    "plt.legend()\n",
+    "plt.show()"
+   ]
+  },
+  {
+   "cell_type": "markdown",
+   "metadata": {},
+   "source": [
+    "### Interpretation of Results\n",
+    "\n",
+    "The histogram above shows the probability distribution of our portfolio's value changes based on random interest rate fluctuations.\n",
+    "\n",
+    "1.  **Skew:** You may notice a slight \"positive skew\" (the tail to the right is longer). This is **Convexity** in action. When rates drop, we gain *more* than we lose when rates rise.\n",
+    "2.  **95% VaR:** The orange line tells us that in 95% of market scenarios, our losses will not exceed this amount. This is a critical metric for banking and fund management risk limits."
+   ]
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "language": "python",
+   "name": "python3"
+  },
+  "language_info": {
+   "codemirror_mode": {
+    "name": "ipython",
+    "version": 3
+   },
+   "file_extension": ".py",
+   "mimetype": "text/x-python",
+   "name": "python",
+   "nbconvert_exporter": "python",
+   "pygments_lexer": "ipython3",
+   "version": "3.10.12"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
